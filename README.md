@@ -290,7 +290,15 @@ Cada módulo de `src/` sigue el patrón "lógica pura, sin efectos secundarios d
 
 ### Capturas de pantalla
 
-### Video
+<img width="367" height="640" alt="Screenshot_20260727_192120_Brave" src="https://github.com/user-attachments/assets/2b4517e5-51ca-43fa-9f31-12aee61b490d" />
+
+<img width="370" height="640" alt="Screenshot_20260727_192146_Brave" src="https://github.com/user-attachments/assets/37706958-7792-4e02-a6e2-68ba8ec059bc" />
+
+<img width="365" height="640" alt="Screenshot_20260727_192223_Brave" src="https://github.com/user-attachments/assets/78c0a91e-645d-4a28-b5c5-8606b789d73e" />
+
+<img width="355" height="768" alt="Screenshot_20260727_192025_Chrome" src="https://github.com/user-attachments/assets/3ad8b146-16bf-4b47-9130-ae552d707acb" />
+
+<img width="921" height="432" alt="image" src="https://github.com/user-attachments/assets/4a0b22e3-330c-4900-b182-f2e106dfebf8" />
 
 ## 🌐 Compatibilidad
 
