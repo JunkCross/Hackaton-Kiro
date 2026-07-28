@@ -29,6 +29,14 @@ import {
   RELIEF_PLATFORM_REPEAT_INTERVAL,
   RELIEF_PLATFORM_WIDTH_MULTIPLIER,
   RELIEF_PLATFORM_SPEED_BOOST_FACTOR,
+  RELIEF_PLATFORM_WIDTH_REDUCED_FACTOR,
+  RELIEF_PLATFORM_RANDOM_SIZE_FIRST_FLOOR,
+  isReliefPlatformRandomSizeFloor,
+  SPEED_SPIKE_FIRST_FLOOR,
+  SPEED_SPIKE_REPEAT_INTERVAL,
+  SPEED_SPIKE_MIN_MULTIPLIER,
+  SPEED_SPIKE_MAX_MULTIPLIER,
+  isSpeedSpikeFloor,
   applyReliefPlatformSpeedBoost,
   BASE_PLATFORM_WIDTH,
   MIN_WIDTH,
@@ -449,11 +457,12 @@ describe('newMovingBlock — ancho exacto de una Plataforma_Respiro', () => {
 
           const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(randomStub);
           try {
-            // Piso elegible como Plataforma_Respiro (floorNum = RELIEF_PLATFORM_FIRST_FLOOR)
+            // Piso elegible como Plataforma_Respiro (floorNum = RELIEF_PLATFORM_FIRST_FLOOR, < 70:
+            // usa el 85% fijo de RELIEF_PLATFORM_WIDTH_REDUCED_FACTOR, ajuste de balance)
             state.floors = new Array(RELIEF_PLATFORM_FIRST_FLOOR);
             const widthWithRelief = newMovingBlock(state, afterFloor, 2000).width;
 
-            expect(widthWithRelief).toBe(BASE_PLATFORM_WIDTH);
+            expect(widthWithRelief).toBe(BASE_PLATFORM_WIDTH * RELIEF_PLATFORM_WIDTH_REDUCED_FACTOR);
           } finally {
             randomSpy.mockRestore();
           }
@@ -537,16 +546,16 @@ describe('newMovingBlock — casos concretos de Plataforma_Respiro combinada con
     state.streakWidthBonus = 0; // sin bono de racha
 
     const afterFloor = { x: 0, width: 400 };
-    const expectedWidth = BASE_PLATFORM_WIDTH; // ancho fijo, no depende de afterFloor.width
+    const expectedWidth = BASE_PLATFORM_WIDTH * RELIEF_PLATFORM_WIDTH_REDUCED_FACTOR; // ancho fijo (85%), no depende de afterFloor.width; floorNum 35 < 70
 
     const block = newMovingBlock(state, afterFloor, 2000);
 
     expect(isReliefPlatformFloor(state.floors.length)).toBe(true);
     expect(block.width).toBe(expectedWidth);
-    expect(block.width).toBe(630);
+    expect(block.width).toBe(535.5);
   });
 
-  it('piso elegible como Plataforma_Respiro CON streakWidthBonus > 0 vigente produce igualmente ancho fijo BASE_PLATFORM_WIDTH (630px), sin importar el bono', () => {
+  it('piso elegible como Plataforma_Respiro CON streakWidthBonus > 0 vigente produce igualmente ancho fijo reducido (85%), sin importar el bono', () => {
     randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
 
     const state = createTowerState(800, 600);
@@ -554,18 +563,18 @@ describe('newMovingBlock — casos concretos de Plataforma_Respiro combinada con
     state.floors = new Array(RELIEF_PLATFORM_FIRST_FLOOR); // floorNum del bloque generado = RELIEF_PLATFORM_FIRST_FLOOR (elegible)
     state.streakWidthBonus = 50; // Bono_Racha_Perfecta vigente, sin efecto sobre el ancho fijo
 
-    // afterFloor.width deliberadamente pequeño: el ancho sigue siendo BASE_PLATFORM_WIDTH,
+    // afterFloor.width deliberadamente pequeño: el ancho sigue siendo el fijo reducido (85%),
     // ya no se deriva de afterFloor.width/streakWidthBonus cuando el piso es elegible.
     const afterFloor = { x: 0, width: 200 };
     const canvasWidth = 2000;
 
-    const expectedWidth = BASE_PLATFORM_WIDTH; // ancho fijo, independiente del bono
+    const expectedWidth = BASE_PLATFORM_WIDTH * RELIEF_PLATFORM_WIDTH_REDUCED_FACTOR; // ancho fijo, independiente del bono; floorNum 35 < 70
 
     const block = newMovingBlock(state, afterFloor, canvasWidth);
 
     expect(isReliefPlatformFloor(state.floors.length)).toBe(true);
     expect(block.width).toBe(expectedWidth);
-    expect(block.width).toBe(630);
+    expect(block.width).toBe(535.5);
   });
 });
 
@@ -995,13 +1004,14 @@ describe('computeNewFloor/dropBlock — casos concretos adicionales del fix (Tar
 // BASE_PLATFORM_WIDTH sin acotar a canvasWidth). NO se debe arreglar el test
 // ni el código cuando falle en este punto del plan.
 describe('newMovingBlock — Property 1 (Bug Condition): ancho de Plataforma_Respiro acotado a canvasWidth en canvases angostos', () => {
-  it('Property 1: para floorNum de Plataforma_Respiro y canvasWidth en [MIN_WIDTH, BASE_PLATFORM_WIDTH - 1], result.width === Math.max(MIN_WIDTH, Math.min(BASE_PLATFORM_WIDTH, canvasWidth)) (comportamiento ESPERADO tras el fix)', () => {
+  it('Property 1: para floorNum de Plataforma_Respiro y canvasWidth en [MIN_WIDTH, BASE_PLATFORM_WIDTH - 1], result.width === Math.max(MIN_WIDTH, Math.min(nominalReliefWidth, canvasWidth)) (comportamiento ESPERADO tras el fix; nominalReliefWidth depende de si floorNum >= RELIEF_PLATFORM_RANDOM_SIZE_FIRST_FLOOR, ajuste de balance)', () => {
     const reliefFloorNumArb = fc.nat({ max: 50 }).map(
       (k) => RELIEF_PLATFORM_FIRST_FLOOR + k * RELIEF_PLATFORM_REPEAT_INTERVAL
     );
     const canvasWidthArb = fc.integer({ min: MIN_WIDTH, max: BASE_PLATFORM_WIDTH - 1 });
     const afterFloorXArb = fc.integer({ min: 0, max: 1000 });
     const afterFloorWidthArb = fc.integer({ min: MIN_WIDTH, max: BASE_PLATFORM_WIDTH });
+    const randomStubArb = fc.float({ min: 0, max: Math.fround(0.999), noNaN: true });
 
     fc.assert(
       fc.property(
@@ -1009,16 +1019,26 @@ describe('newMovingBlock — Property 1 (Bug Condition): ancho de Plataforma_Res
         canvasWidthArb,
         afterFloorXArb,
         afterFloorWidthArb,
-        (floorNum, canvasWidth, afterFloorX, afterFloorWidth) => {
+        randomStubArb,
+        (floorNum, canvasWidth, afterFloorX, afterFloorWidth, randomStub) => {
           expect(isReliefPlatformFloor(floorNum)).toBe(true);
 
           const state = createTowerState(800, 600);
           state.floors = new Array(floorNum);
           const afterFloor = { x: afterFloorX, width: afterFloorWidth };
 
-          const result = newMovingBlock(state, afterFloor, canvasWidth);
+          const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(randomStub);
+          let result;
+          try {
+            result = newMovingBlock(state, afterFloor, canvasWidth);
+          } finally {
+            randomSpy.mockRestore();
+          }
 
-          const expectedWidth = Math.max(MIN_WIDTH, Math.min(BASE_PLATFORM_WIDTH, canvasWidth));
+          const nominalReliefWidth = isReliefPlatformRandomSizeFloor(floorNum)
+            ? BASE_PLATFORM_WIDTH * (0.5 + randomStub * 0.5)
+            : BASE_PLATFORM_WIDTH * RELIEF_PLATFORM_WIDTH_REDUCED_FACTOR;
+          const expectedWidth = Math.max(MIN_WIDTH, Math.min(nominalReliefWidth, canvasWidth));
           expect(result.width).toBe(expectedWidth);
         }
       ),
@@ -1053,7 +1073,7 @@ describe('newMovingBlock — Property 1 (Bug Condition): ancho de Plataforma_Res
 // NOTA: estos tests se escriben ANTES del fix, sobre el código SIN corregir. Se
 // espera que los tres PASEN, capturando el comportamiento base a preservar tras el fix.
 describe('newMovingBlock — Property 2/3 (Preservation): escritorio, rama normal e incremento de velocidad sin cambios', () => {
-  it('Property 2a: para floorNum de Plataforma_Respiro con canvasWidth >= BASE_PLATFORM_WIDTH (incluyendo undefined), width === BASE_PLATFORM_WIDTH', () => {
+  it('Property 2a: para floorNum de Plataforma_Respiro con canvasWidth >= BASE_PLATFORM_WIDTH (incluyendo undefined), width === nominalReliefWidth sin acotar (85% fijo, o aleatorio 50%-100% desde el piso 70, ajuste de balance)', () => {
     const reliefFloorNumArb = fc.nat({ max: 50 }).map(
       (k) => RELIEF_PLATFORM_FIRST_FLOOR + k * RELIEF_PLATFORM_REPEAT_INTERVAL
     );
@@ -1063,6 +1083,7 @@ describe('newMovingBlock — Property 2/3 (Preservation): escritorio, rama norma
     );
     const afterFloorXArb = fc.integer({ min: 0, max: 1000 });
     const afterFloorWidthArb = fc.integer({ min: MIN_WIDTH, max: BASE_PLATFORM_WIDTH });
+    const randomStubArb = fc.float({ min: 0, max: Math.fround(0.999), noNaN: true });
 
     fc.assert(
       fc.property(
@@ -1070,16 +1091,26 @@ describe('newMovingBlock — Property 2/3 (Preservation): escritorio, rama norma
         canvasWidthArb,
         afterFloorXArb,
         afterFloorWidthArb,
-        (floorNum, canvasWidth, afterFloorX, afterFloorWidth) => {
+        randomStubArb,
+        (floorNum, canvasWidth, afterFloorX, afterFloorWidth, randomStub) => {
           expect(isReliefPlatformFloor(floorNum)).toBe(true);
 
           const state = createTowerState(800, 600);
           state.floors = new Array(floorNum);
           const afterFloor = { x: afterFloorX, width: afterFloorWidth };
 
-          const result = newMovingBlock(state, afterFloor, canvasWidth);
+          const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(randomStub);
+          let result;
+          try {
+            result = newMovingBlock(state, afterFloor, canvasWidth);
+          } finally {
+            randomSpy.mockRestore();
+          }
 
-          expect(result.width).toBe(BASE_PLATFORM_WIDTH);
+          const expectedWidth = isReliefPlatformRandomSizeFloor(floorNum)
+            ? BASE_PLATFORM_WIDTH * (0.5 + randomStub * 0.5)
+            : BASE_PLATFORM_WIDTH * RELIEF_PLATFORM_WIDTH_REDUCED_FACTOR;
+          expect(result.width).toBe(expectedWidth);
         }
       ),
       { numRuns: 100 }

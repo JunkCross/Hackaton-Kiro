@@ -32,8 +32,14 @@ export const STABLE_PHASE_DUEL_THRESHOLD = 5;    // Requirement 1.1, 1.6: Duelos
 export const SPEED_CAP = BASE_SPEED * Math.pow(SPEED_INCREMENT_FACTOR, STABLE_PHASE_DUEL_THRESHOLD); // Tope_Velocidad
 export const RELIEF_PLATFORM_FIRST_FLOOR = 35;   // Ajuste de balance: piso absoluto en el que aparece la primera Plataforma_Respiro
 export const RELIEF_PLATFORM_REPEAT_INTERVAL = 30; // Ajuste de balance: a partir de RELIEF_PLATFORM_FIRST_FLOOR, se repite cada N pisos (35, 65, 95, 125, ... infinitamente)
-export const RELIEF_PLATFORM_WIDTH_MULTIPLIER = 2; // Requirement 2.2
+export const RELIEF_PLATFORM_WIDTH_MULTIPLIER = 2; // constante vestigial, no se usa actualmente en la lógica, no tocar ni eliminar
 export const RELIEF_PLATFORM_SPEED_BOOST_FACTOR = 1.005; // Ajuste de balance: +0.5% de velocidad compuesto en cada aparición de Plataforma_Respiro, acotado a SPEED_CAP
+export const RELIEF_PLATFORM_WIDTH_REDUCED_FACTOR = 0.85; // Ajuste de balance: Plataforma_Respiro 15% más angosta (pisos RELIEF_PLATFORM_FIRST_FLOOR..RELIEF_PLATFORM_RANDOM_SIZE_FIRST_FLOOR-1)
+export const RELIEF_PLATFORM_RANDOM_SIZE_FIRST_FLOOR = 70; // Ajuste de balance: a partir de este piso absoluto, la Plataforma_Respiro tiene ancho aleatorio (50%-100% de BASE_PLATFORM_WIDTH)
+export const SPEED_SPIKE_FIRST_FLOOR = 60;        // Ajuste de balance: piso absoluto del primer pico aleatorio de velocidad
+export const SPEED_SPIKE_REPEAT_INTERVAL = 20;    // Ajuste de balance: a partir de SPEED_SPIKE_FIRST_FLOOR, se repite cada N pisos (60, 80, 100, ... infinitamente)
+export const SPEED_SPIKE_MIN_MULTIPLIER = 1.3;    // Ajuste de balance: multiplicador mínimo del pico de velocidad, aplicado solo al bloque de ese piso
+export const SPEED_SPIKE_MAX_MULTIPLIER = 1.8;    // Ajuste de balance: multiplicador máximo del pico de velocidad, aplicado solo al bloque de ese piso
 export const PERFECT_STREAK_BONUS_INTERVAL = 3;   // Requirement 3.4: cada N Duelos Perfectos consecutivos
 export const PERFECT_STREAK_BONUS_WIDTH = 40;     // Requirement 3.4: px otorgados por cada bono
 export const PERFECT_STREAK_BONUS_ENABLED = false; // Ajuste de balance: deshabilitado temporalmente sin eliminar la mecánica (cambiar a true para reactivar)
@@ -173,6 +179,20 @@ export function isReliefPlatformFloor(floorNum) {
     (floorNum - RELIEF_PLATFORM_FIRST_FLOOR) % RELIEF_PLATFORM_REPEAT_INTERVAL === 0;
 }
 
+// Ajuste de balance: determina si el piso absoluto `floorNum` de Plataforma_Respiro
+// SHALL usar ancho aleatorio (50%-100% de BASE_PLATFORM_WIDTH) en vez del 85% fijo.
+export function isReliefPlatformRandomSizeFloor(floorNum) {
+  return floorNum >= RELIEF_PLATFORM_RANDOM_SIZE_FIRST_FLOOR;
+}
+
+// Ajuste de balance: determina si el piso absoluto `floorNum` SHALL disparar un pico
+// aleatorio de velocidad (aplicado únicamente al bloque en movimiento de ese piso).
+// Aparece en el piso 60, y luego cada 20 pisos indefinidamente (80, 100, 120, ...).
+export function isSpeedSpikeFloor(floorNum) {
+  return floorNum >= SPEED_SPIKE_FIRST_FLOOR &&
+    (floorNum - SPEED_SPIKE_FIRST_FLOOR) % SPEED_SPIKE_REPEAT_INTERVAL === 0;
+}
+
 export function newMovingBlock(state, afterFloor, canvasWidth) {
   const h = 34 + Math.random() * 20; // 34-54
   const inStablePhase = state.doorsPassed >= STABLE_PHASE_DUEL_THRESHOLD;
@@ -191,10 +211,17 @@ export function newMovingBlock(state, afterFloor, canvasWidth) {
   // con ancho fijo igual al largo de la base del castillo (BASE_PLATFORM_WIDTH) y un +0.5%
   // compuesto de velocidad (acotado a SPEED_CAP) que se mantiene hasta la siguiente aparición.
   if (isReliefPlatformFloor(state.floors.length)) {
+    // Ajuste de balance: a partir de RELIEF_PLATFORM_RANDOM_SIZE_FIRST_FLOOR (piso 70),
+    // el ancho nominal de Plataforma_Respiro es aleatorio entre 50% y 100% de
+    // BASE_PLATFORM_WIDTH; antes de eso (pisos 35-69), es un 85% fijo (15% más angosto).
+    const nominalReliefWidth = isReliefPlatformRandomSizeFloor(state.floors.length)
+      ? BASE_PLATFORM_WIDTH * (0.5 + Math.random() * 0.5)
+      : BASE_PLATFORM_WIDTH * RELIEF_PLATFORM_WIDTH_REDUCED_FACTOR;
+
     // Requirement 2.2/2.3: acotar el ancho "premio" de Plataforma_Respiro a canvasWidth
     // en canvases más angostos que BASE_PLATFORM_WIDTH, igual que ya hace la rama normal;
     // MIN_WIDTH evita anchos degenerados en canvases extremadamente angostos.
-    w = Math.max(MIN_WIDTH, Math.min(BASE_PLATFORM_WIDTH, canvasWidth ?? Infinity));
+    w = Math.max(MIN_WIDTH, Math.min(nominalReliefWidth, canvasWidth ?? Infinity));
     state.moveSpeed = applyReliefPlatformSpeedBoost(state.moveSpeed);
   }
 
@@ -207,13 +234,21 @@ export function newMovingBlock(state, afterFloor, canvasWidth) {
   const dir = startFromRight ? -1 : 1;
   const x = startFromRight ? maxX : minX;
 
+  // Ajuste de balance: pico aleatorio de velocidad cada SPEED_SPIKE_REPEAT_INTERVAL pisos
+  // desde SPEED_SPIKE_FIRST_FLOOR (60, 80, 100, ...), aplicado únicamente a este bloque
+  // (su propiedad `speed`), sin persistir en state.moveSpeed — el bloque del piso siguiente
+  // vuelve automáticamente a la velocidad normal sin necesitar ninguna lógica de reset.
+  const speed = isSpeedSpikeFloor(state.floors.length)
+    ? state.moveSpeed * (SPEED_SPIKE_MIN_MULTIPLIER + Math.random() * (SPEED_SPIKE_MAX_MULTIPLIER - SPEED_SPIKE_MIN_MULTIPLIER))
+    : state.moveSpeed; // sin cambios (ya lee el Tope_Velocidad cuando corresponde)
+
   return {
     x,
     y: 0,
     width: w,
     height: h,
     dir,
-    speed: state.moveSpeed, // sin cambios (ya lee el Tope_Velocidad cuando corresponde)
+    speed,
     minX,
     maxX,
   };
