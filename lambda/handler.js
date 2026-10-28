@@ -50,18 +50,31 @@ async function handleOptions(event) {
 async function handleGet(event) {
   const requestOrigin = event.headers?.Origin || event.headers?.origin;
   try {
-    const result = await dynamoClient.send(
-      new QueryCommand({
+    // Paginate through all items — no Limit so every registered score is returned.
+    const allItems = [];
+    let lastEvaluatedKey = undefined;
+
+    do {
+      const queryParams = {
         TableName: process.env.TABLE_NAME || 'torre-nubes-scores',
         IndexName: 'gameId-score-index',
         KeyConditionExpression: 'gameId = :g',
         ExpressionAttributeValues: { ':g': { S: 'global' } },
         ScanIndexForward: false,
-        Limit: 10,
-      })
-    );
+      };
 
-    const items = (result.Items || []).map((item) => ({
+      if (lastEvaluatedKey) {
+        queryParams.ExclusiveStartKey = lastEvaluatedKey;
+      }
+
+      const result = await dynamoClient.send(new QueryCommand(queryParams));
+      if (result.Items) {
+        allItems.push(...result.Items);
+      }
+      lastEvaluatedKey = result.LastEvaluatedKey;
+    } while (lastEvaluatedKey);
+
+    const items = allItems.map((item) => ({
       id: item.id.S,
       name: item.name?.S || '',
       score: Number(item.score.N),
